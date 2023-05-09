@@ -332,6 +332,14 @@ class Experiment:
             self._calc_min_max()
         return self._max_time
 
+    @property
+    def min_time_no_tz(self):
+        return self.min_time.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
+    @property
+    def max_time_no_tz(self):
+        return self.max_time.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
     def start_server(self, save_output=False):
         if self.is_server_alive():
             return
@@ -389,7 +397,7 @@ class Experiment:
 
         raise exception
 
-    def query(self, query):
+    def query(self, query, value_field: Optional[str] = None):
         start_time = self.min_time - datetime.timedelta(minutes=1)
         end_time = self.max_time + datetime.timedelta(minutes=10)
 
@@ -401,7 +409,10 @@ class Experiment:
         )
         if m:
             m = MetricRangeDataFrame(m)
-            return m.sort_index()
+            m.sort_index(inplace=True)
+            if value_field is not None:
+                m.rename({'value': value_field}, inplace=True, axis=1)
+            return m
         else:
             return None
 
