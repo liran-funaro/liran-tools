@@ -1,0 +1,88 @@
+# Author: Liran Funaro <liran.funaro@gmail.com>
+#
+# Copyright (C) 2006-2023 Liran Funaro
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liran-tools"
+version = "0.1.0"
+description = "A toolbox for plotting experiments results."
+readme = "README.md"
+authors = [{ name = "Liran Funaro", email = "liran.funaro@gmail.com" }]
+license = { text = "GNU-3-Clause" }
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+dependencies = [
+    'python-dateutil',
+    'seaborn',
+    'matplotlib',
+    'pandas',
+    'numpy',
+    'tabulate',
+    'pyyaml',
+    'tqdm',
+    'termcolor',
+    'setuptools',
+    'pytz',
+    'ipython',
+    'requests',
+    'psutil',
+    'prometheus_api_client',
+    'tqdm',
+]
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = ["pip-tools"]
+
+[project.urls]
+Homepage = "https://github.com/liran-funaro/liran-tools"
+
+[tool.bumpver]
+current_version = "0.1.0"
+version_pattern = "MAJOR.MINOR.PATCH[-TAG]"
+commit_message = "bump version {old_version} -> {new_version}"
+commit = true
+tag = true
+push = false
+
+[tool.bumpver.file_patterns]
+"pyproject.toml" = [
+    "current_version = \"{version}\"",
+    "version = \"{version}\"",
+    "Copyright (c) 2006-YYYY, Liran Funaro.",
+]
+"README.md" = [
+    "classparse=={version}",
+    "Copyright (c) 2006-YYYY, Liran Funaro.",
+]
+"*.py" = [
+    "Copyright (c) 2006-YYYY, Liran Funaro.",
+]
+"*.sh" = [
+    "Copyright (c) 2006-YYYY, Liran Funaro.",
+]
+"__init__.py" = [
+    "^__version__ = \"{version}\"$",
+]
