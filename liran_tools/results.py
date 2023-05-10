@@ -43,6 +43,9 @@ DATE_FORMAT = "%Y-%m-%d--%H:%M:%S"
 MAIN_PATH = os.path.expanduser('~/workspace-data/results')
 GROUP_EXP_PARAMETER_SHEET_FILE = "param-sheet.csv"
 EXP_PARAMETERS_FILE = "log/exp.ini"
+PROMETHEUS_READ_ONLY_CONF = """global:
+  scrape_interval: 1d
+"""
 
 
 class NoSuchResultError(Exception):
@@ -349,10 +352,14 @@ class Experiment:
         stdout = subprocess.PIPE if save_output else subprocess.DEVNULL
         stderr = subprocess.PIPE if save_output else subprocess.DEVNULL
 
+        conf_path = self.metrics.joinpath('prometheus-conf-read-only.yml')
+        with conf_path.open('w') as f:
+            f.write(PROMETHEUS_READ_ONLY_CONF)
+
         self._server = subprocess.Popen([
             "prometheus",
             "--storage.tsdb.path=metrics",
-            f"--config.file={os.path.abspath('prometheus-ro.yml')}",
+            f"--config.file={conf_path.absolute()}",
             f"--web.listen-address=localhost:{self.port}"
         ], cwd=self.path, stdout=stdout, stderr=stderr)
 
