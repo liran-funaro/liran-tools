@@ -1,4 +1,24 @@
 """
+Experiment results group path should be structured as follows:
+
+exp-group-root
+ |- group-date-1 (optional)
+ |   |- exp-sheet.csv (file, optional)
+ |   |- exp-1
+ |   |   |- exp-date-1 (optional)
+ |   |   |   |- exp.yml (file, optional)
+ |   |   |   |- log (folder)
+ |   |   |   \- metrics (folder)
+ |   |   |
+ |   |   |- exp-date-2
+ |   |   \- ...
+ |   |
+ |   |- exp-2
+ |   \- ...
+ |
+ |- group-date-2
+ \- ...
+
 Author: Liran Funaro <liran.funaro@gmail.com>
 
 Copyright (C) 2006-2023 Liran Funaro
@@ -29,7 +49,7 @@ import psutil
 import yaml
 from dateutil import parser
 from pathlib import Path
-from typing import List, Optional, Callable, Union, Tuple
+from typing import List, Optional, Callable, Union, Tuple, Iterable
 import pandas as pd
 
 from prometheus_api_client import PrometheusConnect, MetricRangeDataFrame, PrometheusApiClientException
@@ -37,15 +57,13 @@ from tqdm.notebook import tqdm
 
 SPACE_SPLITTER = re.compile(r"\s+", re.I | re.M)
 NUM_SPLITTER = r = re.compile(r"(\d+)")
-PROMETHEUS_PORT_RANGE = range(20_000, 30_000)
+PROMETHEUS_PORT_RANGE = range(20_000, 21_000)
 PROMETHEUS_PORT_ITER = itertools.cycle(PROMETHEUS_PORT_RANGE)
 DATE_FORMAT = "%Y-%m-%d--%H:%M:%S"
 MAIN_PATH = os.path.expanduser('~/workspace-data/results')
 GROUP_EXP_PARAMETER_SHEET_FILE = "param-sheet.csv"
-EXP_PARAMETERS_FILE = "log/exp.ini"
-PROMETHEUS_READ_ONLY_CONF = """global:
-  scrape_interval: 1d
-"""
+EXP_PARAMETERS_FILE = "exp.yml"
+PROMETHEUS_READ_ONLY_CONF = "global:\n  scrape_interval: 1d\n"
 
 
 class NoSuchResultError(Exception):
@@ -53,14 +71,19 @@ class NoSuchResultError(Exception):
         super().__init__(f"No result with name: {name}")
 
 
-def get_result_paths(res_dir: str, main_path: str = MAIN_PATH):
-    res_path = Path(os.path.expanduser(main_path))
-    res = filter(lambda s: s.is_dir(), (s.joinpath(res_dir) for s in res_path.iterdir()))
-    return list(res)
+def _iter_result_paths(res_dir: Union[str, Path], main_path: str = MAIN_PATH) -> Iterable[Path]:
+    res_dir = str(res_dir)
+    for root, dirs, files in os.walk(os.path.expanduser(main_path)):
+        if res_dir == root[-len(res_dir):]:
+            yield Path(root)
 
 
-def get_path_date(path):
-    for p in Path(path).parts:
+def get_result_paths(res_dir: Union[str, Path], main_path: str = MAIN_PATH) -> List[Path]:
+    return list(_iter_result_paths(res_dir, main_path))
+
+
+def get_path_date(path: Union[str, Path]):
+    for p in Path(path).parts[::-1]:
         # noinspection PyBroadException
         try:
             return datetime.datetime.strptime(p, DATE_FORMAT)
@@ -107,22 +130,16 @@ def get_latest_path(*paths: Path, index=0, force_date=False):
         else:
             date_paths = paths
 
-    index = len(date_paths) - 1 - index
-    if index < 0:
-        index = 0
+    index = max(0, len(date_paths) - 1 - index)
     return date_paths[index]
 
 
-def get_latest_result_path(res_dir: str, main_path: str = MAIN_PATH, index=0, force_date=False):
+def get_latest_result_path(res_dir: Union[str, Path], main_path: str = MAIN_PATH, index=0, force_date=False):
     paths = get_result_paths(res_dir, main_path)
     if len(paths) == 0:
         raise NoSuchResultError(res_dir)
 
     return get_latest_path(*paths, index=index, force_date=force_date)
-
-
-def get_latest_sub_result_path(res_dir: Path, index=0, force_date=False):
-    return get_latest_path(res_dir, index=index, force_date=force_date)
 
 
 def get_log_lines_first_time(log_lines: List[str]):
@@ -161,11 +178,10 @@ def kill_all_servers(port_range: Union[range, set, int] = PROMETHEUS_PORT_RANGE)
 
 
 def display_servers(port_range: Union[range, set, int] = PROMETHEUS_PORT_RANGE):
-    servers = list(find_all_servers(port_range))
     return pd.DataFrame([
         [s.name(), s.pid, s.status(), str(Path(s.cwd()).relative_to(MAIN_PATH)),
          datetime.datetime.fromtimestamp(s.create_time()), list(p)]
-        for s, p in servers
+        for s, p in find_all_servers(port_range)
     ], columns=['name', 'pid', 'status', 'cwd', 'started', 'ports'])
 
 
@@ -184,7 +200,7 @@ def get_exp_csv(path: Path,
     exp_group_name = path.name
 
     exp_path = list(path.iterdir())
-    exp_prop_path = [get_latest_sub_result_path(p).joinpath(exp_parameters_filename) for p in exp_path]
+    exp_prop_path = [get_latest_path(p).joinpath(exp_parameters_filename) for p in exp_path]
     if all(p.is_file() for p in exp_prop_path):
         exp_prop = [read_prop_file(p) for p in exp_prop_path]
         for cur_path, prop in zip(exp_path, exp_prop):
@@ -195,6 +211,10 @@ def get_exp_csv(path: Path,
     df = [[exp_group_name, p.name, *t] for t, p in sort_path_by_num(*exp_path)]
     max_len = max(len(row) for row in df)
     return pd.DataFrame(df, columns=['exp_group_name', 'name', *(f'f{i}' for i in range(max_len - 2))])
+
+
+def no_tz(t: datetime.datetime):
+    return t.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 
 
 class ExperimentGroup:
@@ -209,10 +229,6 @@ class ExperimentGroup:
     def __repr__(self):
         return f'{self.__class__.__name__}({self.path.relative_to(MAIN_PATH)})'
 
-    @classmethod
-    def _next_port(cls):
-        return next(PROMETHEUS_PORT_ITER)
-
     def __getitem__(self, item):
         if isinstance(item, int):
             idx = self.exp.iloc[item].name
@@ -225,15 +241,14 @@ class ExperimentGroup:
         cache_key = (str(self.path), name)
         exp = self.exp_cache.get(cache_key, None)
         if exp is None:
-            p = get_latest_sub_result_path(self.path.joinpath(name))
-            exp = Experiment(p, port=self._next_port())
+            exp = Experiment(get_latest_path(self.path.joinpath(name)))
             self.exp_cache[cache_key] = exp
         return exp
 
     def __len__(self):
         return len(self.exp)
 
-    def iterexp(self):
+    def iter_exp(self):
         for _, row in self.exp.iterrows():
             try:
                 e = self[row['name']]
@@ -245,7 +260,7 @@ class ExperimentGroup:
     def collect(self, exp_callback: Callable[['Experiment'], pd.DataFrame]):
         dfs = []
         with ThreadPool(32) as e:
-            m = e.imap(lambda row_exp: (row_exp[0], exp_callback(row_exp[1])), self.iterexp())
+            m = e.imap(lambda row_exp: (row_exp[0], exp_callback(row_exp[1])), self.iter_exp())
             for row, df in tqdm(m, total=len(self)):
                 if df is None:
                     continue
@@ -261,12 +276,11 @@ class ExperimentGroup:
 
 
 class Experiment:
-    def __init__(self, name, port=PROMETHEUS_PORT_RANGE[-1], result_index=0):
-        self.name = name
-        self.path = get_latest_result_path(name, index=result_index)
+    def __init__(self, res_path: Union[str, Path], result_index=0):
+        self.path = get_latest_result_path(res_path, index=result_index)
         self.log = self.path.joinpath("log")
         self.metrics = self.path.joinpath("metrics")
-        self.port = port
+        self.port = self._next_port()
 
         self._logs_min_max_time = None
         self._min_time = None
@@ -278,21 +292,32 @@ class Experiment:
 
         weakref.finalize(self, self.kill_this_server)
 
+    @classmethod
+    def _next_port(cls):
+        return next(PROMETHEUS_PORT_ITER)
+
     def __repr__(self):
         return f'{self.__class__.__name__}({self.path.relative_to(MAIN_PATH)})'
 
     @property
     def is_executed(self):
-        if not (self.log.is_dir() and len(list(self.log.iterdir())) > 0) and (
-                self.metrics.is_dir() and len(list(self.metrics.iterdir())) > 0
-        ):
+        if not (self.have_logs and self.have_metrics):
             return False
 
         return self.min_time < self.max_time
 
     def logs(self):
-        logs = self.path.joinpath("log")
-        return [log_file for log_file in logs.iterdir() if log_file.match("*.log")]
+        if not self.log.is_dir():
+            return []
+        return [log_file for log_file in self.log.iterdir() if log_file.match("*.log")]
+
+    @property
+    def have_logs(self):
+        return len(self.logs()) > 0
+
+    @property
+    def have_metrics(self):
+        return self.metrics.is_dir() and len(list(self.metrics.iterdir())) > 0
 
     def benchmark_logs(self):
         return [log_file for log_file in self.logs() if 'prometheus' not in log_file.name]
@@ -337,11 +362,11 @@ class Experiment:
 
     @property
     def min_time_no_tz(self):
-        return self.min_time.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return no_tz(self.min_time)
 
     @property
     def max_time_no_tz(self):
-        return self.max_time.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return no_tz(self.max_time)
 
     def start_server(self, save_output=False):
         if self.is_server_alive():
@@ -422,7 +447,3 @@ class Experiment:
             return m
         else:
             return None
-
-
-def to_utc(t: datetime.datetime):
-    return t.astimezone(datetime.timezone.utc).replace(tzinfo=None)
