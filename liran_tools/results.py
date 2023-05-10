@@ -2,22 +2,22 @@
 Experiment results group path should be structured as follows:
 
 exp-group-root
- |- group-date-1 (optional)
- |   |- exp-sheet.csv (file, optional)
- |   |- exp-1
- |   |   |- exp-date-1 (optional)
- |   |   |   |- exp.yml (file, optional)
- |   |   |   |- log (folder)
- |   |   |   \- metrics (folder)
- |   |   |
- |   |   |- exp-date-2
- |   |   \- ...
- |   |
- |   |- exp-2
- |   \- ...
- |
- |- group-date-2
- \- ...
+├── YYYY-MM-DD--HH:MM:SS (optional group date; can be cascaded)
+│   ├── exp-sheet.csv (file, optional)
+│   ├── exp-1 (experiment name)
+│   │   ├── YYYY-MM-DD--HH:MM:SS (optional experiment date; can be cascaded)
+│   │   │   ├── exp.yml (file, optional)
+│   │   │   ├── log (folder)
+│   │   │   └── metrics (folder)
+│   │   │
+│   │   ├── YYYY-MM-DD--HH:MM:SS
+│   │   └── ...
+│   │
+│   ├── exp-2 (experiment name)
+│   └── ...
+│
+├── YYYY-MM-DD--HH:MM:SS
+└── ...
 
 Author: Liran Funaro <liran.funaro@gmail.com>
 
@@ -60,7 +60,7 @@ NUM_SPLITTER = r = re.compile(r"(\d+)")
 PROMETHEUS_PORT_RANGE = range(20_000, 21_000)
 PROMETHEUS_PORT_ITER = itertools.cycle(PROMETHEUS_PORT_RANGE)
 DATE_FORMAT = "%Y-%m-%d--%H:%M:%S"
-MAIN_PATH = os.path.expanduser('~/workspace-data/results')
+MAIN_PATH = os.path.abspath(os.path.expanduser('~/workspace-data/results'))
 GROUP_EXP_PARAMETER_SHEET_FILE = "param-sheet.csv"
 EXP_PARAMETERS_FILE = "exp.yml"
 PROMETHEUS_READ_ONLY_CONF = "global:\n  scrape_interval: 1d\n"
@@ -73,17 +73,21 @@ class NoSuchResultError(Exception):
 
 def _iter_result_paths(res_dir: Union[str, Path], main_path: str = MAIN_PATH) -> Iterable[Path]:
     res_dir = str(res_dir)
-    for root, dirs, files in os.walk(os.path.expanduser(main_path)):
-        if res_dir == root[-len(res_dir):]:
+    main_path = os.path.abspath(os.path.expanduser(main_path))
+    for root, dirs, files in os.walk(main_path):
+        if root.endswith(res_dir):
             yield Path(root)
 
 
 def get_result_paths(res_dir: Union[str, Path], main_path: str = MAIN_PATH) -> List[Path]:
+    res_dir = Path(res_dir)
+    if res_dir.is_absolute() and res_dir.is_dir():
+        return [res_dir]
     return list(_iter_result_paths(res_dir, main_path))
 
 
 def get_path_date(path: Union[str, Path]):
-    for p in Path(path).parts[::-1]:
+    for p in reversed(Path(path).parts):
         # noinspection PyBroadException
         try:
             return datetime.datetime.strptime(p, DATE_FORMAT)
