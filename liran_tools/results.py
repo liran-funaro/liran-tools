@@ -217,6 +217,28 @@ def no_tz(t: datetime.datetime):
     return t.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 
 
+def _wrap_exp_callback(exp_callback: Callable[['Experiment'], pd.DataFrame]):
+    def __wrapper__(row_exp: Tuple[pd.Series, 'Experiment']):
+        row, e = row_exp
+        if not e.is_executed:
+            print(e, "not executed", file=sys.stderr)
+            return None
+
+        try:
+            df = exp_callback(e)
+            if df is None:
+                return None
+            for k, v in row.items():
+                df[k] = v
+            return df
+        except Exception as ex:
+            print(e, ex, file=sys.stderr)
+
+        return None
+
+    return __wrapper__
+
+
 class ExperimentGroup:
     def __init__(self, name, result_index=0,
                  group_sheet_filename=GROUP_EXP_PARAMETER_SHEET_FILE,
@@ -258,15 +280,9 @@ class ExperimentGroup:
                 print(e, file=sys.stderr)
 
     def collect(self, exp_callback: Callable[['Experiment'], pd.DataFrame]):
-        dfs = []
         with ThreadPool(32) as e:
-            m = e.imap(lambda row_exp: (row_exp[0], exp_callback(row_exp[1])), self.iter_exp())
-            for row, df in tqdm(m, total=len(self)):
-                if df is None:
-                    continue
-                for k, v in row.items():
-                    df[k] = v
-                dfs.append(df)
+            m = e.imap(_wrap_exp_callback(exp_callback), self.iter_exp())
+            dfs = list(filter(lambda x: x is not None, tqdm(m, total=len(self))))
         if not dfs:
             return None
         return pd.concat(dfs)
