@@ -28,7 +28,7 @@ echo "Syncing ${rel_path} to ${servers[*]}"
 for s in "${servers[@]}"; do
 	rsync -avz \
 	  --rsync-path="mkdir -p ~/${rel_path} & rsync" \
-	  --exclude ".git" --exclude "*.ipynb" --exclude "*.pdf" --exclude ".DS_Store" \
+	  --exclude ".git" --exclude "*.ipynb" --exclude "*.pdf" --exclude ".DS_Store" --exclude ".idea" \
 	  --delete --delete-excluded --filter=':- .gitignore' \
 	  ./ "${s}:~/${rel_path}/"
 done
