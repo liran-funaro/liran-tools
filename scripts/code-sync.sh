@@ -19,7 +19,21 @@
 
 set -e
 
-servers=( "$@" )
+servers=()
+additional_args=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--hard)
+      additional_args=("--delete-excluded")
+      shift
+      ;;
+    *)
+      servers+=("$1")
+      shift
+      ;;
+  esac
+done
 
 rel_path=$(perl -e 'use File::Spec; print File::Spec->abs2rel(@ARGV) . "\n"' . ~)
 
@@ -29,6 +43,6 @@ for s in "${servers[@]}"; do
 	rsync -avz \
 	  --rsync-path="mkdir -p ~/${rel_path} & rsync" \
 	  --exclude ".git" --exclude "*.ipynb" --exclude "*.pdf" --exclude ".DS_Store" --exclude ".idea" \
-	  --delete --delete-excluded --filter=':- .gitignore' \
+	  --delete "${additional_args[@]}" --filter=':- .gitignore' \
 	  ./ "${s}:~/${rel_path}/"
 done
