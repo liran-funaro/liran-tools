@@ -46,8 +46,9 @@ import re
 from multiprocessing.pool import ThreadPool
 
 import psutil
+import pytz
 import yaml
-from dateutil import parser
+import datefinder
 from pathlib import Path
 from typing import List, Optional, Callable, Union, Tuple, Iterable
 import pandas as pd
@@ -56,7 +57,7 @@ from prometheus_api_client import PrometheusConnect, MetricRangeDataFrame, Prome
 from tqdm.notebook import tqdm
 
 SPACE_SPLITTER = re.compile(r"\s+", re.I | re.M)
-NUM_SPLITTER = r = re.compile(r"(\d+)")
+NUM_SPLITTER = re.compile(r"(\d+)")
 PROMETHEUS_PORT_RANGE = range(20_000, 21_000)
 PROMETHEUS_PORT_ITER = itertools.cycle(PROMETHEUS_PORT_RANGE)
 DATE_FORMAT = "%Y-%m-%d--%H:%M:%S"
@@ -148,10 +149,8 @@ def get_latest_result_path(res_dir: Union[str, Path], main_path: str = MAIN_PATH
 
 def get_log_lines_first_time(log_lines: List[str]):
     for line in log_lines:
-        try:
-            return parser.parse(SPACE_SPLITTER.split(line)[0])
-        except parser.ParserError:
-            continue
+        for d in datefinder.find_dates(line, strict=True):
+            return d
 
 
 def get_log_min_max_time(log_file: Path):
@@ -329,7 +328,7 @@ class Experiment:
     def logs(self):
         if not self.log.is_dir():
             return []
-        return [log_file for log_file in self.log.iterdir() if log_file.match("*.log")]
+        return [log_file for log_file in self.log.rglob("*.log")]
 
     @property
     def have_logs(self):
@@ -353,18 +352,21 @@ class Experiment:
                 for log_file in self.benchmark_logs()
             }
         except Exception as e:
-            print(self, "Failed reading time from logs:", e, file=sys.stderr)
+            print(self, f"Failed reading time from logs ({type(e).__name__}):", e, file=sys.stderr)
             self._logs_min_max_time = {}
 
         return self._logs_min_max_time
 
     def _calc_min_max(self):
+        def remove_tz(d: datetime.datetime):
+            return d.astimezone(pytz.timezone("Israel"))
+
         try:
             min_time, max_time = zip(*self.logs_min_max_time.values())
-            self._min_time = min(filter(None, min_time))
-            self._max_time = max(filter(None, max_time))
+            self._min_time = min(map(remove_tz, filter(None, min_time)))
+            self._max_time = max(map(remove_tz, filter(None, max_time)))
         except Exception as e:
-            print(self, "Failed reading time from logs:", e, file=sys.stderr)
+            print(self, f"Failed reading time from logs ({type(e).__name__})::", e, file=sys.stderr)
             self._min_time = get_path_date(self.path)
             self._max_time = datetime.datetime.now()
 
