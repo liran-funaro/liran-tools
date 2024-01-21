@@ -52,19 +52,24 @@ import datefinder
 from pathlib import Path
 from typing import List, Optional, Callable, Union, Tuple, Iterable
 import pandas as pd
+from docker.types import Mount
 
 from prometheus_api_client import PrometheusConnect, MetricRangeDataFrame, PrometheusApiClientException
 from tqdm.notebook import tqdm
+import docker
 
-SPACE_SPLITTER = re.compile(r"\s+", re.I | re.M)
+SPACE_SPLITTER = re.compile(r"[ \t]+", re.I | re.M)
 NUM_SPLITTER = re.compile(r"(\d+)")
 PROMETHEUS_PORT_RANGE = range(20_000, 21_000)
 PROMETHEUS_PORT_ITER = itertools.cycle(PROMETHEUS_PORT_RANGE)
 DATE_FORMAT = "%Y-%m-%d--%H:%M:%S"
+ALT_PATH_DATE_FORMAT = "%Y-%m-%d--%H-%M-%S"
 MAIN_PATH = os.path.abspath(os.path.expanduser('~/workspace-data/results'))
 GROUP_EXP_PARAMETER_SHEET_FILE = "param-sheet.csv"
 EXP_PARAMETERS_FILE = "exp.yml"
 PROMETHEUS_READ_ONLY_CONF = "global:\n  scrape_interval: 1d\n"
+PROMETHEUS_DATE_FMT = "ts=%Y-%m-%dT%H:%M:%S.%fZ"
+BENCH_DATE_FMT = "%Y-%m-%dT%H:%M:%S.%f%z"
 
 
 class NoSuchResultError(Exception):
@@ -92,6 +97,12 @@ def get_path_date(path: Union[str, Path]):
         # noinspection PyBroadException
         try:
             return datetime.datetime.strptime(p, DATE_FORMAT)
+        except Exception:
+            pass
+
+        # noinspection PyBroadException
+        try:
+            return datetime.datetime.strptime(p, ALT_PATH_DATE_FORMAT)
         except Exception:
             continue
 
@@ -149,14 +160,33 @@ def get_latest_result_path(res_dir: Union[str, Path], main_path: str = MAIN_PATH
 
 def get_log_lines_first_time(log_lines: List[str]):
     for line in log_lines:
-        for d in datefinder.find_dates(line, strict=True):
+        line_init = SPACE_SPLITTER.split(line, 1)[0]
+        try:
+            return datetime.datetime.strptime(line_init, PROMETHEUS_DATE_FMT).replace(tzinfo=pytz.UTC)
+        except:
+            pass
+
+    for line in log_lines:
+        line_init = SPACE_SPLITTER.split(line, 1)[0]
+        try:
+            return datetime.datetime.strptime(line_init, BENCH_DATE_FMT)
+        except:
+            pass
+
+    for line in log_lines:
+        for d in datefinder.find_dates(line, strict=True, first="year"):
             return d
+
+
+def to_utc(d: datetime.datetime):
+    if d is not None:
+        return d.astimezone(pytz.UTC)
 
 
 def get_log_min_max_time(log_file: Path):
     with log_file.open('r') as f:
         lines = f.readlines()
-        return get_log_lines_first_time(lines), get_log_lines_first_time(lines[::-1])
+        return tuple(map(to_utc, [get_log_lines_first_time(lines), get_log_lines_first_time(lines[::-1])]))
 
 
 def find_all_servers(port_range: Union[range, set, int] = PROMETHEUS_PORT_RANGE):
@@ -232,7 +262,7 @@ def _wrap_exp_callback(exp_callback: Callable[['Experiment'], pd.DataFrame]):
             if df is None:
                 return None
             for k, v in row.items():
-                df[k] = v
+                df.loc[:, k] = v
             return df
         except Exception as ex:
             print(e, ex, file=sys.stderr)
@@ -297,8 +327,8 @@ class ExperimentGroup:
 class Experiment:
     def __init__(self, res_path: Union[str, Path], result_index=0):
         self.path = get_latest_result_path(res_path, index=result_index)
-        self.log = self.path.joinpath("log")
-        self.metrics = self.path.joinpath("metrics")
+        self.log: Path = self.path.joinpath("log")
+        self.metrics: Path = self.path.joinpath("metrics")
         self.port = self._next_port()
 
         self._logs_min_max_time = None
@@ -338,9 +368,6 @@ class Experiment:
     def have_metrics(self):
         return self.metrics.is_dir() and len(list(self.metrics.iterdir())) > 0
 
-    def benchmark_logs(self):
-        return [log_file for log_file in self.logs() if 'prometheus' not in log_file.name]
-
     @property
     def logs_min_max_time(self):
         if self._logs_min_max_time is not None:
@@ -348,8 +375,8 @@ class Experiment:
 
         try:
             self._logs_min_max_time = {
-                log_file.name: get_log_min_max_time(log_file)
-                for log_file in self.benchmark_logs()
+                str(log_file.relative_to(self.log)): get_log_min_max_time(log_file)
+                for log_file in self.logs()
             }
         except Exception as e:
             print(self, f"Failed reading time from logs ({type(e).__name__}):", e, file=sys.stderr)
@@ -357,14 +384,23 @@ class Experiment:
 
         return self._logs_min_max_time
 
+    def min_max_time(self, subset: Optional[str] = None):
+        if subset is None:
+            return self.min_time, self.max_time
+
+        min_time, max_time = zip(*(v for k, v in self.logs_min_max_time.items() if subset in k))
+        return min(filter(None, min_time)), max(filter(None, max_time))
+
     def _calc_min_max(self):
-        def remove_tz(d: datetime.datetime):
-            return d.astimezone(pytz.timezone("Israel"))
+        prom_dates = self.logs_min_max_time.get("prometheus.log", None)
+        if prom_dates is not None:
+            self._min_time, self._max_time = prom_dates
+            return
 
         try:
             min_time, max_time = zip(*self.logs_min_max_time.values())
-            self._min_time = min(map(remove_tz, filter(None, min_time)))
-            self._max_time = max(map(remove_tz, filter(None, max_time)))
+            self._min_time = min(filter(None, min_time))
+            self._max_time = max(filter(None, max_time))
         except Exception as e:
             print(self, f"Failed reading time from logs ({type(e).__name__})::", e, file=sys.stderr)
             self._min_time = get_path_date(self.path)
@@ -389,6 +425,46 @@ class Experiment:
     @property
     def max_time_no_tz(self):
         return no_tz(self.max_time)
+
+    def find_container(self):
+        client = docker.from_env()
+        for c in client.containers.list():
+            path = c.attrs["Config"]["Labels"].get("path")
+            if path == str(self.path.absolute()):
+                return c
+
+    def kill_container(self):
+        c = self.find_container()
+        if c is None:
+            return
+        c.kill()
+        c.remove()
+
+    def start_container(self, remove=True):
+        c = self.find_container()
+        if c is not None:
+            return c
+
+        conf_path = self.metrics.joinpath('prometheus-conf-read-only.yml')
+        with conf_path.open('w') as f:
+            f.write(PROMETHEUS_READ_ONLY_CONF)
+
+        client = docker.from_env()
+        return client.containers.run(
+            image="ubuntu/prometheus",
+            remove=remove,
+            labels={
+                "path": str(self.path.absolute()),
+            },
+            mounts=[
+                Mount(type="bind", source=str(self.metrics.joinpath("wal").absolute()), target="/prometheus/wal"),
+                Mount(type="bind", source=str(conf_path.absolute()), target="/etc/prometheus/prometheus.yml"),
+            ],
+            ports={
+                "9090/tcp": None,
+            },
+            detach=True,
+        )
 
     def start_server(self, save_output=False):
         if self.is_server_alive():
@@ -437,8 +513,12 @@ class Experiment:
         self._prom = PrometheusConnect(url=f"http://localhost:{self.port}/")
         return self._prom
 
-    def _query(self, query, start_time, end_time):
-        for step in ['10s', '30s', '1m']:
+    def _query(self, query, start_time, end_time, step_list=None):
+        if step_list is None:
+            step_list = '10s', '30s', '1m', '2m'
+
+        exception = None
+        for step in step_list:
             try:
                 return self.prom_api.custom_query_range(
                     query,
@@ -449,9 +529,10 @@ class Experiment:
             except PrometheusApiClientException as e:
                 exception = e
 
-        raise exception
+        if exception:
+            raise exception
 
-    def query(self, query, value_field: Optional[str] = None):
+    def query(self, query, value_field: Optional[str] = None, step_list=None):
         start_time = self.min_time - datetime.timedelta(minutes=1)
         end_time = self.max_time + datetime.timedelta(minutes=10)
 
@@ -460,6 +541,7 @@ class Experiment:
             query,
             start_time=start_time,
             end_time=end_time,
+            step_list=step_list,
         )
         if m:
             m = MetricRangeDataFrame(m)
