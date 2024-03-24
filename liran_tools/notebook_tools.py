@@ -49,9 +49,6 @@ def init_notebook(dpi=300, figsize=(8, 3), bg='none'):
     except ValueError:
         pass
 
-    get_ipython().run_line_magic('reload_ext', 'autoreload')
-    get_ipython().run_line_magic('autoreload', 2)
-
     pd.set_option('display.max_rows', 1000)
     pd.set_option('display.max_colwidth', 200)
     plt.rcParams['figure.dpi'] = dpi
