@@ -48,9 +48,10 @@ dependencies = [
     'ipython',
     'requests',
     'psutil',
-    'prometheus_api_client',
+    'prometheus-api-client',
     'datefinder',
     'pytz',
+    'docker',
 ]
 requires-python = ">=3.8"
 
