@@ -34,6 +34,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules"
 ]
 dependencies = [
+    'jupyterlab',
+    'ipywidgets',
+    'widgetsnbextension',
+    'pandas-profiling',
     'python-dateutil',
     'seaborn',
     'matplotlib',
