@@ -95,7 +95,6 @@ def save_fig(filename, lgd=None, fig_format='pdf', cwd=None, **kwargs):
     if cwd is None:
         cwd = os.getcwd()
 
-    filepath = os.path.join(cwd, 'figs', f"{filename}.{fig_format}")
     if lgd is None:
         try:
             lgd = plt.gca().legend_
@@ -109,6 +108,8 @@ def save_fig(filename, lgd=None, fig_format='pdf', cwd=None, **kwargs):
     else:
         bbox_extra_artists = (lgd,)
 
+    filepath = os.path.join(cwd, f"{filename}.{fig_format}")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
     plt.savefig(filepath, format=fig_format, bbox_extra_artists=bbox_extra_artists,
                 bbox_inches='tight', dpi=300, **kwargs)
 

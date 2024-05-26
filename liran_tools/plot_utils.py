@@ -23,10 +23,10 @@ import matplotlib
 from matplotlib import pylab as plt
 from matplotlib.patches import FancyBboxPatch
 
-from typing import Union, List
+from typing import Union, List, Optional
 
 
-def nicer_plot(ax=None, grid_x=True, grid_y=True):
+def nicer_plot(ax: Optional[plt.Axes] = None, grid_x=True, grid_y=True):
     if ax is None:
         for i, ax in enumerate(plt.gcf().get_axes()):
             nicer_plot(ax, grid_x=grid_x, grid_y=grid_y if i == 0 else False)
@@ -91,7 +91,7 @@ def top_legend(ax: Union[None, plt.Axes, List[plt.Axes]] = None, n_cols=None, t=
                      handles=handles, labels=labels, **kwargs)
 
 
-def bottom_legend(ax=None, n_cols=10,  t=1, **kwargs):
+def bottom_legend(ax=None, n_cols=10, t=1, **kwargs):
     if ax is None:
         ax = plt.gca()
     ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05 * t),

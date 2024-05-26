@@ -41,6 +41,7 @@ import itertools
 import os
 import subprocess
 import sys
+import traceback
 import weakref
 import re
 from multiprocessing.pool import ThreadPool
@@ -266,6 +267,7 @@ def _wrap_exp_callback(exp_callback: Callable[['Experiment'], pd.DataFrame]):
             return df
         except Exception as ex:
             print(e, ex, file=sys.stderr)
+            traceback.print_exception(ex, file=sys.stderr)
 
         return None
 
@@ -328,6 +330,8 @@ class Experiment:
     def __init__(self, res_path: Union[str, Path], result_index=0):
         self.path = get_latest_result_path(res_path, index=result_index)
         self.log: Path = self.path.joinpath("log")
+        if not self.log.exists():
+            self.log: Path = self.path.joinpath("logs")
         self.metrics: Path = self.path.joinpath("metrics")
         self.port = self._next_port()
 
@@ -392,11 +396,6 @@ class Experiment:
         return min(filter(None, min_time)), max(filter(None, max_time))
 
     def _calc_min_max(self):
-        prom_dates = self.logs_min_max_time.get("prometheus.log", None)
-        if prom_dates is not None:
-            self._min_time, self._max_time = prom_dates
-            return
-
         try:
             min_time, max_time = zip(*self.logs_min_max_time.values())
             self._min_time = min(filter(None, min_time))
