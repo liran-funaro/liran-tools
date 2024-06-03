@@ -22,6 +22,7 @@ class PlotConfig(analyze.DataConfig):
     throughput_label: str | None = None
     latency_label: str | None = None
     hue: str | None = None
+    phase: str | None = None
     n_cols: int = 3
     limit: tuple[int, int] = (None, None)
     filter_func: DataFrameModifier | None = None
@@ -37,21 +38,28 @@ def _get_ax(ax: Optional[plt.Axes] = None) -> plt.Axes:
     return ax
 
 
-def plot_boundaries(e: Experiment, ax: Optional[plt.Axes] = None):
+def plot_phase_boundaries(df: pd.DataFrame, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None):
     # Plot boundaries
     ax = _get_ax(ax)
-    for k, color in (("warmup", "red"), ("benchmark", "black")):
+
+    for k, color in zip(df[conf.phase].unique(), ("red", "blue", "black", "green")):
         try:
-            l, h = e.min_max_time(k)
+            l, h = analyze.get_min_max_time(df[df[conf.phase] == k])
             ax.axvline(l, color=color, linewidth=1, linestyle="--", label=k.title())
             ax.axvline(h, color=color, linewidth=1, linestyle="--")
         except Exception as ex:
             print(f"Failed plotting {k} boundaries:", ex, file=sys.stderr)
 
 
-def plot_workload_begin(e: Experiment, df: pd.DataFrame, ax: Optional[plt.Axes] = None):
+def plot_workload_begin(
+        e: Experiment, df: pd.DataFrame,
+        conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None,
+):
     if len(df) == 0:
         return
+
+    if conf.phase is not None:
+        return plot_phase_boundaries(df, conf, ax)
 
     first_time_seconds = df["Time (seconds)"].iloc[0]
     first_timestamp = analyze.get_timestamp_col(df).iloc[0]
@@ -84,14 +92,17 @@ def filter_df(pdf: pd.DataFrame, conf: PlotConfig = DEFAULT_CONFIG) -> pd.DataFr
     return pdf
 
 
-def _experiment_plot(e: Experiment, df: pd.DataFrame, y_label: Optional[str], ax: plt.Axes):
-    plot_workload_begin(e, df, ax=ax)
+def _experiment_plot(
+        e: Experiment, df: pd.DataFrame, y_label: Optional[str],
+        conf: PlotConfig, ax: plt.Axes
+):
+    plot_workload_begin(e, df, conf=conf, ax=ax)
     ax.set_xlabel("Experiment time")
     if y_label:
         ax.set_ylabel(y_label)
     ax.set_ylim(0, None)
     plot_utils.nicer_plot(ax=ax)
-    plot_utils.top_legend(n_cols=1, ax=ax)
+    plot_utils.top_legend(n_cols=conf.n_cols, ax=ax)
     plot_utils.seconds_xticks(ax=ax)
 
 
@@ -102,25 +113,27 @@ def plot_throughput(
     df = filter_df(df, conf=conf)
     ax = _get_ax(ax)
     sns.lineplot(df, x="Time (seconds)", y="Throughput (K)", hue=conf.hue, style=conf.hue, ax=ax)
-    _experiment_plot(e, df, conf.throughput_label, ax)
+    _experiment_plot(e, df, conf.throughput_label, conf, ax)
 
 
 def plot_latency(
         e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None,
 ):
     df = analyze.get_mean_latency(e, conf=conf)
+    df = filter_df(df, conf=conf)
     ax = _get_ax(ax)
     sns.lineplot(df, x="Time (seconds)", y="Latency (seconds)", hue=conf.hue, style=conf.hue, ax=ax)
-    _experiment_plot(e, df, conf.latency_label, ax)
+    _experiment_plot(e, df, conf.latency_label, conf, ax)
 
 
 def plot_99_latency(
         e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None,
 ):
     df = analyze.get_percentile(e, conf=conf)
+    df = filter_df(df, conf=conf)
     ax = _get_ax(ax)
     sns.lineplot(df, x="Time (seconds)", y="99-Latency (seconds)", hue=conf.hue, style=conf.hue, ax=ax)
-    _experiment_plot(e, df, conf.latency_label, ax)
+    _experiment_plot(e, df, conf.latency_label, conf, ax)
 
 
 def plot_hist(e: Experiment, fields: list[str], conf: PlotConfig = DEFAULT_CONFIG):
@@ -139,14 +152,14 @@ def plot_rate(e: Experiment, field: str, conf: PlotConfig = DEFAULT_CONFIG, ax: 
     df = analyze.get_rate(e, field, conf=conf)
     ax = _get_ax(ax)
     sns.lineplot(data=df, x="Time (seconds)", y="value", hue=conf.hue, ax=ax)
-    _experiment_plot(e, df, None, ax)
+    _experiment_plot(e, df, None, conf, ax)
 
 
 def plot_value(e: Experiment, field: str, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None):
     df = analyze.get_value(e, field)
     ax = _get_ax(ax)
     sns.lineplot(data=df, x="Time (seconds)", y="value", hue=conf.hue, ax=ax)
-    _experiment_plot(e, df, None, ax)
+    _experiment_plot(e, df, None, conf, ax)
 
 
 def plot_all_exp(eg: ExperimentGroup, conf: PlotConfig = DEFAULT_CONFIG):

@@ -29,6 +29,7 @@ class DataConfig:
 
 
 DEFAULT_CONFIG = DataConfig("throughput_field", "latency_field")
+TimeField = "Time (seconds)"
 
 
 def get_timestamp_col(df: pd.DataFrame, conf: DataConfig = DEFAULT_CONFIG):
@@ -52,7 +53,13 @@ def add_time_seconds(e: Experiment, *dfs: pd.DataFrame, conf: DataConfig = DEFAU
         return
 
     for df in dfs:
-        df["Time (seconds)"] = (get_timestamp_col(df, conf=conf) - min_time).total_seconds()
+        df[TimeField] = (get_timestamp_col(df, conf=conf) - min_time).total_seconds()
+
+
+def get_min_max_time(df: pd.DataFrame):
+    assert len(df) > 0
+    time_col = df[TimeField]
+    return time_col.min(), time_col.max()
 
 
 def _get_by_aggregator(by: list[str] | None = None):
@@ -104,7 +111,7 @@ def get_rate(
 
 
 def get_value(
-        e: Experiment, field: str,conf: DataConfig = DEFAULT_CONFIG,
+        e: Experiment, field: str, conf: DataConfig = DEFAULT_CONFIG,
 ) -> Optional[pd.DataFrame]:
     df = e.query(f"sum {_get_by_aggregator(conf.by)} ({field})")
     add_time_seconds(e, df, conf=conf)
