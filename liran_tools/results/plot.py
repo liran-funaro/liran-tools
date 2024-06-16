@@ -9,6 +9,8 @@ from typing import Optional
 import matplotlib.pylab as plt
 import pandas as pd
 import seaborn as sns
+from IPython.core.display_functions import display
+
 from liran_tools import plot_utils
 from liran_tools.results import Experiment, ExperimentGroup
 
@@ -61,7 +63,7 @@ def plot_workload_begin(
     if conf.phase is not None:
         return plot_phase_boundaries(df, conf, ax)
 
-    first_time_seconds = df["Time (seconds)"].iloc[0]
+    first_time_seconds = df[analyze.TimeField].iloc[0]
     first_timestamp = analyze.get_timestamp_col(df).iloc[0]
     w_start = e.min_time_no_tz
     w_end = e.max_time_no_tz
@@ -79,12 +81,14 @@ def filter_df(pdf: pd.DataFrame, conf: PlotConfig = DEFAULT_CONFIG) -> pd.DataFr
         pdf = conf.filter_func(pdf)
 
     l_lim, h_lim = conf.limit
+    if h_lim is not None and h_lim < 0:
+        _, h_lim = analyze.get_min_max_time(pdf)
     if l_lim is not None and h_lim is not None:
-        pdf = pdf[(pdf["Time (seconds)"] > l_lim) & (pdf["Time (seconds)"] < h_lim)]
+        pdf = pdf[(pdf[analyze.TimeField] > l_lim) & (pdf[analyze.TimeField] < h_lim)]
     elif l_lim is not None:
-        pdf = pdf[pdf["Time (seconds)"] > l_lim]
+        pdf = pdf[pdf[analyze.TimeField] > l_lim]
     elif h_lim is not None:
-        pdf = pdf[pdf["Time (seconds)"] < h_lim]
+        pdf = pdf[pdf[analyze.TimeField] < h_lim]
 
     pdf = pdf.reset_index()
     if conf.map_func:
@@ -101,45 +105,24 @@ def _experiment_plot(
     if y_label:
         ax.set_ylabel(y_label)
     ax.set_ylim(0, None)
+    plot_utils.large_number_y_ticks(ax=ax)
     plot_utils.nicer_plot(ax=ax)
     plot_utils.top_legend(n_cols=conf.n_cols, ax=ax)
     plot_utils.seconds_xticks(ax=ax)
 
 
-def plot_throughput(
-        e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None,
-):
-    df = analyze.get_throughput(e, conf=conf)
+def plot(e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None):
+    df = analyze.get(e, conf=conf)
     df = filter_df(df, conf=conf)
     ax = _get_ax(ax)
-    sns.lineplot(df, x="Time (seconds)", y="Throughput (K)", hue=conf.hue, style=conf.hue, ax=ax)
+    sns.lineplot(df, x=analyze.TimeField, y=conf.value_field, hue=conf.hue, style=conf.hue, ax=ax)
     _experiment_plot(e, df, conf.throughput_label, conf, ax)
-
-
-def plot_latency(
-        e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None,
-):
-    df = analyze.get_mean_latency(e, conf=conf)
-    df = filter_df(df, conf=conf)
-    ax = _get_ax(ax)
-    sns.lineplot(df, x="Time (seconds)", y="Latency (seconds)", hue=conf.hue, style=conf.hue, ax=ax)
-    _experiment_plot(e, df, conf.latency_label, conf, ax)
-
-
-def plot_99_latency(
-        e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None,
-):
-    df = analyze.get_percentile(e, conf=conf)
-    df = filter_df(df, conf=conf)
-    ax = _get_ax(ax)
-    sns.lineplot(df, x="Time (seconds)", y="99-Latency (seconds)", hue=conf.hue, style=conf.hue, ax=ax)
-    _experiment_plot(e, df, conf.latency_label, conf, ax)
 
 
 def plot_hist(e: Experiment, fields: list[str], conf: PlotConfig = DEFAULT_CONFIG):
     dfs = analyze.get_hist(e, fields, conf=conf)
     for k, df in dfs.items():
-        sns.barplot(df, x="le", y="value")
+        sns.barplot(df, x="le", y=conf.value_field)
         plot_utils.nicer_plot()
         ax = plt.gca()
         t = ax.get_xticklabels()
@@ -148,36 +131,16 @@ def plot_hist(e: Experiment, fields: list[str], conf: PlotConfig = DEFAULT_CONFI
         plt.show()
 
 
-def plot_rate(e: Experiment, field: str, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None):
-    df = analyze.get_rate(e, field, conf=conf)
-    ax = _get_ax(ax)
-    sns.lineplot(data=df, x="Time (seconds)", y="value", hue=conf.hue, ax=ax)
-    _experiment_plot(e, df, None, conf, ax)
-
-
-def plot_value(e: Experiment, field: str, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes] = None):
-    df = analyze.get_value(e, field)
-    ax = _get_ax(ax)
-    sns.lineplot(data=df, x="Time (seconds)", y="value", hue=conf.hue, ax=ax)
-    _experiment_plot(e, df, None, conf, ax)
-
-
-def plot_all_exp(eg: ExperimentGroup, conf: PlotConfig = DEFAULT_CONFIG):
+def plot_all_exp(eg: ExperimentGroup, conf: list[PlotConfig] = (DEFAULT_CONFIG,)):
     for row, e in eg.iter_exp():
-        print(row["group"], row["name"])
-        fig, axes = plt.subplots(1, 3)
-        try:
-            plot_throughput(e, conf=conf, ax=axes[0])
-        except Exception as ex:
-            print(e, ex, file=sys.stderr)
-        try:
-            plot_latency(e, conf=conf, ax=axes[1])
-        except Exception as ex:
-            print(e, ex, file=sys.stderr)
-        try:
-            plot_99_latency(e, conf=conf, ax=axes[2])
-        except Exception as ex:
-            print(e, ex, file=sys.stderr)
+        display(row.to_frame().T)
+        fig, axes = plt.subplots(1, len(conf), figsize=(3 * len(conf), 3))
+        for ax, c in zip(axes, conf):
+            try:
+                plot(e, conf=dataclasses.replace(c, n_cols=1), ax=ax)
+            except Exception as ex:
+                print(e, ex, file=sys.stderr)
+        plt.tight_layout()
         plt.show()
 
 
@@ -189,6 +152,7 @@ def plt_bar_df(
     ax = _get_ax(ax)
     sns.barplot(pdf, x=x, y=y, hue=conf.hue, ax=ax, **kwargs)
     plot_utils.nicer_plot(ax=ax)
+    plot_utils.large_number_y_ticks(ax=ax)
     if conf.hue is not None:
         plot_utils.top_legend(n_cols=conf.n_cols, ax=ax)
     return pdf
@@ -201,8 +165,9 @@ def plt_line_df(
     pdf = filter_df(pdf, conf=conf)
     ax = _get_ax(ax)
     sns.lineplot(pdf, x=x, y=y, hue=conf.hue, style=conf.hue, markers=True, ax=ax, **kwargs)
-    plot_utils.nicer_plot(ax=ax)
     ax.set_ylim(0, None)
+    plot_utils.nicer_plot(ax=ax)
+    plot_utils.large_number_y_ticks(ax=ax)
     if conf.hue is not None:
         plot_utils.top_legend(n_cols=conf.n_cols, ax=ax)
     return pdf

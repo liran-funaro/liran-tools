@@ -129,3 +129,6 @@ dmypy.json
 # Spark and train data
 .DS_store
 data/
+dist
+*.egg-info
+

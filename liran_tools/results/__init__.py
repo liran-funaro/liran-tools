@@ -56,7 +56,7 @@ import pandas as pd
 from docker.types import Mount
 
 from prometheus_api_client import PrometheusConnect, MetricRangeDataFrame, PrometheusApiClientException
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 import docker
 
 SPACE_SPLITTER = re.compile(r"[ \t]+", re.I | re.M)

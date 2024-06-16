@@ -2,6 +2,7 @@
 Author: Liran Funaro <liran.funaro@gmail.com>
 """
 import dataclasses
+import functools
 from enum import Enum
 from typing import Optional
 
@@ -15,20 +16,35 @@ class AddTimeSeconds(Enum):
     Nothing = "no"
 
 
+class Aggregator(Enum):
+    Sum = "sum"
+    Avg = "avg"
+
+
+class Method(Enum):
+    Rate = "rate"
+    HistMean = "hist-mean",
+    HistPercentile = "hist-percentile"
+    Value = "value"
+
+
 ByType = list[str] | tuple[str] | None
 
 
 @dataclasses.dataclass
 class DataConfig:
-    throughput_field: str
-    latency_field: str
+    method: Method = Method.Rate
+    field: str = "throughput"
+    value_field: str = "Throughput"
+    percentile: float = 0.5
+    aggregator: Aggregator = Aggregator.Avg
     timestamp_field: str = "timestamp"
     by: ByType = None
     window: str = "10s"
     add_time: AddTimeSeconds = AddTimeSeconds.SinceExperimentBegin
 
 
-DEFAULT_CONFIG = DataConfig("throughput_field", "latency_field")
+DEFAULT_CONFIG = DataConfig()
 TimeField = "Time (seconds)"
 
 
@@ -45,9 +61,10 @@ def get_timeseries_min_time(*dfs: pd.DataFrame, conf: DataConfig = DEFAULT_CONFI
 
 
 def add_time_seconds(e: Experiment, *dfs: pd.DataFrame, conf: DataConfig = DEFAULT_CONFIG):
-    if conf.add_time == AddTimeSeconds.SinceTimeSeries:
+    add_time = AddTimeSeconds(conf.add_time)
+    if add_time.name == AddTimeSeconds.SinceTimeSeries.name:
         min_time = get_timeseries_min_time(*dfs, conf=conf)
-    elif conf.add_time == AddTimeSeconds.SinceExperimentBegin:
+    elif add_time.name == AddTimeSeconds.SinceExperimentBegin.name:
         min_time = e.min_time_no_tz
     else:
         return
@@ -68,53 +85,31 @@ def _get_by_aggregator(by: list[str] | None = None):
     return f"by ({','.join(by)})"
 
 
-def get_throughput(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
-    df = e.query(
-        f"avg {_get_by_aggregator(conf.by)} (rate({conf.throughput_field}[{conf.window}]) * 1e-3)",
-        value_field="Throughput (K)"
-    )
-    add_time_seconds(e, df, conf=conf)
-    df.reset_index(inplace=True)
-    return df
-
-
-def get_mean_latency(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
+def get(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
     by_agg = _get_by_aggregator(conf.by)
-    df = e.query(
-        f"(avg {by_agg} (irate({conf.latency_field}_sum[{conf.window}])))/"
-        f"(avg {by_agg} (irate({conf.latency_field}_count[{conf.window}])))",
-        value_field="Latency (seconds)",
-    )
+    method = Method(conf.method)
+    if method.name == Method.Rate.name:
+        query = f"{conf.aggregator} {by_agg} (rate({conf.field}[{conf.window}]))"
+    elif method.name == Method.HistMean.name:
+        query = (
+            f"("
+            f"({conf.aggregator} {by_agg} (irate({conf.field}_sum[{conf.window}])))/"
+            f"({conf.aggregator} {by_agg} (irate({conf.field}_count[{conf.window}])))"
+            f")"
+        )
+    elif method.name == Method.HistPercentile.name:
+        query = (
+            f"{conf.aggregator} {_get_by_aggregator(conf.by)} ("
+            f"histogram_quantile({conf.percentile}, rate({conf.field}_bucket[{conf.window}]))"
+            f")"
+        )
+    elif method.name == Method.Value.name:
+        query = f"{conf.aggregator} {_get_by_aggregator(conf.by)} ({conf.field})"
+    else:
+        raise ValueError(f"Unknown method: {conf.method}")
+    df = e.query(query, value_field=conf.value_field)
     add_time_seconds(e, df, conf=conf)
     df.reset_index(inplace=True)
-    return df
-
-
-def get_percentile(e: Experiment, percentile=0.99, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
-    df = e.query(
-        f"avg {_get_by_aggregator(conf.by)} ("
-        f"histogram_quantile({percentile}, rate({conf.latency_field}_bucket[{conf.window}]))"
-        f")",
-        value_field=f"{percentile * 100:.0f}-Latency (seconds)",
-    )
-    add_time_seconds(e, df, conf=conf)
-    df.reset_index(inplace=True)
-    return df
-
-
-def get_rate(
-        e: Experiment, field: str, conf: DataConfig = DEFAULT_CONFIG,
-) -> Optional[pd.DataFrame]:
-    df = e.query(f"sum {_get_by_aggregator(conf.by)} (rate({field}[{conf.window}]))")
-    add_time_seconds(e, df, conf=conf)
-    return df
-
-
-def get_value(
-        e: Experiment, field: str, conf: DataConfig = DEFAULT_CONFIG,
-) -> Optional[pd.DataFrame]:
-    df = e.query(f"sum {_get_by_aggregator(conf.by)} ({field})")
-    add_time_seconds(e, df, conf=conf)
     return df
 
 
@@ -137,7 +132,8 @@ def get_hist(
 
     dfs = {
         k: e.query(
-            f"sum {_get_by_aggregator(by)} (rate({k}_bucket[{conf.window}]))"
+            f"{conf.aggregator} {_get_by_aggregator(by)} (rate({k}_bucket[{conf.window}]))",
+            value_field=conf.value_field,
         ) for k in fields
     }
 
@@ -148,21 +144,30 @@ def get_hist(
     return dfs
 
 
-def get_all(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
-    intermediate_conf = dataclasses.replace(conf, add_time=AddTimeSeconds.Nothing)
+def get_all(e: Experiment, conf: list[DataConfig] = (DEFAULT_CONFIG,)) -> Optional[pd.DataFrame]:
+    timestamp_field = conf[0].timestamp_field
+    add_time = conf[0].add_time
+    by = conf[0].by
+    assert all(timestamp_field == c.timestamp_field for c in conf)
+    assert all(add_time == c.add_time for c in conf)
+    assert all(by == c.by for c in conf)
+
     dfs = [
-        get_throughput(e, conf=intermediate_conf),
-        get_mean_latency(e, conf=intermediate_conf),
-        get_percentile(e, conf=intermediate_conf),
+        get(e, conf=dataclasses.replace(c, add_time=AddTimeSeconds.Nothing))
+        for c in conf
     ]
 
-    for df in dfs:
-        df.set_index([conf.timestamp_field], inplace=True)
+    key = [timestamp_field]
+    if by is not None:
+        key.extend(by)
 
-    df = dfs[0].join(dfs[1]).join(dfs[2])
-    add_time_seconds(e, df, conf=conf)
+    for df in dfs:
+        df.set_index(key, inplace=True)
+
+    df = functools.reduce(lambda ldf, rdf: ldf.join(rdf, how="outer"), dfs)
+    add_time_seconds(e, df, conf=conf[0])
     return df.reset_index()
 
 
-def collect_all(eg: ExperimentGroup, conf: DataConfig = DEFAULT_CONFIG):
+def collect_all(eg: ExperimentGroup, conf: list[DataConfig] = (DEFAULT_CONFIG,)):
     return eg.collect(lambda e: get_all(e, conf=conf))

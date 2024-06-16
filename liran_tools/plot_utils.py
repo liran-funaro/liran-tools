@@ -20,6 +20,7 @@ import itertools
 import datetime
 
 import matplotlib
+import numpy as np
 from matplotlib import pylab as plt
 from matplotlib.patches import FancyBboxPatch
 
@@ -140,3 +141,46 @@ def nice_patch(ax=None, mutation_aspect=2):
                                 )
         patch.remove()
         ax.add_patch(p_bbox)
+
+
+ABBREVIATIONS = {
+    -4: "p",  # pico  - 1e-12
+    -3: "n",  # nano  - 1e-9
+    -2: "μ",  # micro - 1e-6
+    -1: "m",  # milli - 1e-3
+    0: "",
+    1: "K",  # kilo  - 1e3
+    2: "M",  # mega  - 1e6
+    3: "G",  # giga  - 1e9
+    4: "T",  # tera  - 1e12
+    5: "P",  # peta  - 1e15
+    6: "E",  # exa   - 1e18
+}
+
+
+def _get_number_level(value: int | float) -> int:
+    if value == 0:
+        return 0
+
+    abs_value = abs(value)
+    for level in sorted(ABBREVIATIONS):
+        if abs_value < 10 ** (3 * level):
+            return level - 1
+    return max(ABBREVIATIONS)
+
+
+def _large_number_ticks(value: int | float) -> str:
+    level = _get_number_level(value)
+    adjusted_value = round(value / 10 ** (3 * level), 2)
+    return f"{adjusted_value:g}{ABBREVIATIONS[level]}"
+
+
+def large_number_y_ticks(ax: Optional[plt.Axes] = None):
+    if ax is None:
+        ax = plt.gca()
+    ticks = ax.get_yticks()
+    abs_ticks = np.abs(ticks)
+    if ((abs_ticks == 0) | ((abs_ticks >= 1) & (abs_ticks < 1e3))).all():
+        return
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(list(map(_large_number_ticks, ticks)))
