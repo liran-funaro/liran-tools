@@ -6,6 +6,7 @@ import functools
 from enum import Enum
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from liran_tools.results import Experiment, ExperimentGroup
 
@@ -41,6 +42,7 @@ class DataConfig:
     timestamp_field: str = "timestamp"
     by: ByType = None
     window: str = "10s"
+    filter: str = None
     add_time: AddTimeSeconds = AddTimeSeconds.SinceExperimentBegin
 
 
@@ -85,26 +87,41 @@ def _get_by_aggregator(by: list[str] | None = None):
     return f"by ({','.join(by)})"
 
 
+def _field(conf: DataConfig, suffix: str | None = None, window=True):
+    if conf.filter is None:
+        field_filter = ""
+    else:
+        field_filter = f"{{{conf.filter}}}"
+    name = conf.field
+    if suffix is not None:
+        name = f"{name}_{suffix}"
+    if window is True:
+        window = f"[{conf.window}]"
+    else:
+        window = ""
+    return f"{name}{field_filter}{window}"
+
+
 def get(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
     by_agg = _get_by_aggregator(conf.by)
     method = Method(conf.method)
     if method.name == Method.Rate.name:
-        query = f"{conf.aggregator} {by_agg} (rate({conf.field}[{conf.window}]))"
+        query = f"{conf.aggregator} {by_agg} (rate({_field(conf)}))"
     elif method.name == Method.HistMean.name:
         query = (
             f"("
-            f"({conf.aggregator} {by_agg} (irate({conf.field}_sum[{conf.window}])))/"
-            f"({conf.aggregator} {by_agg} (irate({conf.field}_count[{conf.window}])))"
+            f"({conf.aggregator} {by_agg} (irate({_field(conf, 'sum')})))/"
+            f"({conf.aggregator} {by_agg} (irate({_field(conf, 'count')})))"
             f")"
         )
     elif method.name == Method.HistPercentile.name:
         query = (
             f"{conf.aggregator} {_get_by_aggregator(conf.by)} ("
-            f"histogram_quantile({conf.percentile}, rate({conf.field}_bucket[{conf.window}]))"
+            f"histogram_quantile({conf.percentile}, rate({_field(conf, 'bucket')}))"
             f")"
         )
     elif method.name == Method.Value.name:
-        query = f"{conf.aggregator} {_get_by_aggregator(conf.by)} ({conf.field})"
+        query = f"{conf.aggregator} {_get_by_aggregator(conf.by)} ({_field(conf, window=False)})"
     else:
         raise ValueError(f"Unknown method: {conf.method}")
     df = e.query(query, value_field=conf.value_field)
@@ -113,14 +130,37 @@ def get(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFra
     return df
 
 
-def le_to_hist(gdf: pd.DataFrame):
+def le_to_hist(gdf: pd.DataFrame, conf: DataConfig = DEFAULT_CONFIG):
     gdf.sort_values("le", inplace=True)
-    gdf["value"] = gdf["value"].diff()
-    gdf["value"] /= gdf["value"].sum()
+    f = gdf[conf.value_field].diff()
+    s = f.sum()
+    if not np.isclose(s, 0, atol=1e-3):
+        f /= s
+    gdf[conf.value_field] = f
     return gdf
 
 
 def get_hist(
+        e: Experiment, conf: DataConfig = DEFAULT_CONFIG,
+) -> pd.DataFrame:
+    by = ["le"]
+    if conf.by:
+        if "le" not in conf.by:
+            by = ["le", *conf.by]
+        else:
+            by = conf.by
+
+    df = e.query(
+        f"{conf.aggregator} {_get_by_aggregator(by)} (rate({_field(conf, 'bucket')}))",
+        value_field=conf.value_field,
+    )
+
+    df["le"] = pd.Categorical(df["le"], sorted(df["le"].unique(), key=lambda x: float(x)))
+    df = df.groupby(df.index, group_keys=False).apply(lambda gdf: le_to_hist(gdf, conf))
+    return df
+
+
+def get_multi_hist(
         e: Experiment, fields: list[str], conf: DataConfig = DEFAULT_CONFIG,
 ) -> dict[str, pd.DataFrame]:
     by = ["le"]
@@ -139,7 +179,7 @@ def get_hist(
 
     for k, df in dfs.items():
         df["le"] = pd.Categorical(df["le"], sorted(df["le"].unique(), key=lambda x: float(x)))
-        dfs[k] = df.groupby(df.index, group_keys=False).apply(le_to_hist)
+        dfs[k] = df.groupby(df.index, group_keys=False).apply(lambda gdf: le_to_hist(gdf, conf))
 
     return dfs
 

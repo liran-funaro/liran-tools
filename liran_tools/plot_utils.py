@@ -114,6 +114,7 @@ def seconds_xticks(ax=None):
         ax = plt.gca()
 
     ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _pos: str(datetime.timedelta(seconds=x))))
+    ax.tick_params(axis="x", labelrotation=45)
 
 
 def nice_patch(ax=None, mutation_aspect=2):

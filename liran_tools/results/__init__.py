@@ -126,11 +126,11 @@ def _try_num(s: str) -> Union[int, str]:
         return s
 
 
-def path_sort_key(path_name: str) -> Tuple[Union[int, str]]:
+def path_sort_key(path_name: str) -> tuple[int | str, ...]:
     return tuple(map(_try_num, NUM_SPLITTER.split(path_name)))
 
 
-def sort_path_by_num(*path: Path) -> List[Tuple[Tuple[Union[int, str]], Path]]:
+def sort_path_by_num(*path: Path) -> list[tuple[tuple[int | str, ...], Path]]:
     return sorted([(path_sort_key(p.name), p) for p in path])
 
 

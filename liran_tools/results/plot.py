@@ -2,6 +2,7 @@
 Author: Liran Funaro <liran.funaro@gmail.com>
 """
 import dataclasses
+import math
 import sys
 import typing
 from typing import Optional
@@ -105,6 +106,7 @@ def _experiment_plot(
     if y_label:
         ax.set_ylabel(y_label)
     ax.set_ylim(0, None)
+    ax.set_xlim(0, None)
     plot_utils.large_number_y_ticks(ax=ax)
     plot_utils.nicer_plot(ax=ax)
     plot_utils.top_legend(n_cols=conf.n_cols, ax=ax)
@@ -119,8 +121,18 @@ def plot(e: Experiment, conf: PlotConfig = DEFAULT_CONFIG, ax: Optional[plt.Axes
     _experiment_plot(e, df, conf.throughput_label, conf, ax)
 
 
-def plot_hist(e: Experiment, fields: list[str], conf: PlotConfig = DEFAULT_CONFIG):
-    dfs = analyze.get_hist(e, fields, conf=conf)
+def plot_hist(e: Experiment, conf: PlotConfig = DEFAULT_CONFIG):
+    df = analyze.get_hist(e, conf=conf)
+    df = df[~pd.isna(df[conf.value_field])]
+    sns.barplot(df, x="le", y=conf.value_field)
+    plot_utils.nicer_plot()
+    ax = plt.gca()
+    t = ax.get_xticklabels()
+    ax.set_xticklabels(t, rotation=90)
+
+
+def plot_multi_hist(e: Experiment, fields: list[str], conf: PlotConfig = DEFAULT_CONFIG):
+    dfs = analyze.get_multi_hist(e, fields, conf=conf)
     for k, df in dfs.items():
         sns.barplot(df, x="le", y=conf.value_field)
         plot_utils.nicer_plot()
@@ -131,16 +143,26 @@ def plot_hist(e: Experiment, fields: list[str], conf: PlotConfig = DEFAULT_CONFI
         plt.show()
 
 
-def plot_all_exp(eg: ExperimentGroup, conf: list[PlotConfig] = (DEFAULT_CONFIG,)):
+def plot_all_single_exp(e: Experiment, conf: list[PlotConfig] = (DEFAULT_CONFIG,), max_cols=None):
+    n_rows = 1
+    n_cols = len(conf)
+    if max_cols is not None:
+        n_cols = max_cols
+        n_rows = int(math.ceil(len(conf) / max_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
+    for ax, c in zip(axes.flat, conf):
+        try:
+            plot(e, conf=dataclasses.replace(c, n_cols=1), ax=ax)
+        except Exception as ex:
+            print(e, ex, file=sys.stderr)
+    plt.tight_layout()
+
+
+def plot_all_exp(eg: ExperimentGroup, conf: list[PlotConfig] = (DEFAULT_CONFIG,), max_cols=None):
     for row, e in eg.iter_exp():
         display(row.to_frame().T)
-        fig, axes = plt.subplots(1, len(conf), figsize=(3 * len(conf), 3))
-        for ax, c in zip(axes, conf):
-            try:
-                plot(e, conf=dataclasses.replace(c, n_cols=1), ax=ax)
-            except Exception as ex:
-                print(e, ex, file=sys.stderr)
-        plt.tight_layout()
+        plot_all_single_exp(e, conf, max_cols=max_cols)
         plt.show()
 
 
