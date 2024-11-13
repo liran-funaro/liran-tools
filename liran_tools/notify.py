@@ -1,4 +1,6 @@
+import json
 import logging
+import multiprocessing.synchronize
 import os
 import subprocess
 import pathlib
@@ -31,8 +33,22 @@ def notify_ubuntu(app_name: str, title: str, msg: str, buttons: list[str] | tupl
     return p.stdout.strip()
 
 
-def notify_ntfy(msg: str):
+def notify_ntfy(message: str, **kwargs):
     if not NTFY_TOPIC:
         logging.warning("No NTFY topic configured")
         return
-    requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode(encoding='utf-8'))
+    data = {
+        "topic": NTFY_TOPIC,
+        "message": message,
+        **kwargs
+    }
+    requests.post(f"https://ntfy.sh", data=json.dumps(data).encode(encoding='utf-8'))
+
+
+def listen_ntfy(stopper: multiprocessing.Event):
+    with requests.get(f"https://ntfy.sh/{NTFY_TOPIC}/json", stream=True) as resp:
+        for line in resp.iter_lines():
+            if line:
+                yield json.loads(line)
+            if stopper.is_set():
+                return
