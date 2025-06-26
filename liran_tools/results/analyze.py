@@ -103,25 +103,26 @@ def _field(conf: DataConfig, suffix: str | None = None, window=True):
 
 
 def get(e: Experiment, conf: DataConfig = DEFAULT_CONFIG) -> Optional[pd.DataFrame]:
-    by_agg = _get_by_aggregator(conf.by)
+    agg_by = f"{conf.aggregator.value} {_get_by_aggregator(conf.by)}"
     method = Method(conf.method)
+
     if method.name == Method.Rate.name:
-        query = f"{conf.aggregator} {by_agg} (rate({_field(conf)}))"
+        query = f"{agg_by} (rate({_field(conf)}))"
     elif method.name == Method.HistMean.name:
         query = (
             f"("
-            f"({conf.aggregator} {by_agg} (irate({_field(conf, 'sum')})))/"
-            f"({conf.aggregator} {by_agg} (irate({_field(conf, 'count')})))"
+            f"({agg_by} (irate({_field(conf, 'sum')})))/"
+            f"({agg_by} (irate({_field(conf, 'count')})))"
             f")"
         )
     elif method.name == Method.HistPercentile.name:
         query = (
-            f"{conf.aggregator} {_get_by_aggregator(conf.by)} ("
+            f"{agg_by} ("
             f"histogram_quantile({conf.percentile}, rate({_field(conf, 'bucket')}))"
             f")"
         )
     elif method.name == Method.Value.name:
-        query = f"{conf.aggregator} {_get_by_aggregator(conf.by)} ({_field(conf, window=False)})"
+        query = f"{agg_by} ({_field(conf, window=False)})"
     else:
         raise ValueError(f"Unknown method: {conf.method}")
     df = e.query(query, value_field=conf.value_field)
